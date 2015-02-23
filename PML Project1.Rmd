@@ -1,0 +1,210 @@
+---
+title: "Project1 Machine Learning"
+author: "David Seibel"
+date: "February 21, 2015"
+output: html_document
+---
+
+#Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset). This site also provides the training and testing data available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+#Executive Summary
+
+The goal of this project is to predict the manner in which they did the exercise, which is reflected in the "classe" variable in the training set. I explored the available predictor variables and seleted those that did not have near zero values and that were not primarily single valued.  I compared two machine learning techniques, proceeded with the better one and performed cross validation to estimate the out of sample error.  The resulting model was used to predict the classes of the 20 test questions on the project assignment page.
+
+A random forest model provided the best accuracy rfAccur on the training data and the best out-of-sample error estimate rfOutSamp.
+
+The classification model provided cmAccur accuracy and cmOutSamp out-of-sample error estimate.
+
+The score on the 20 test questions was testScore.
+
+
+#Processing Data
+
+The Rmarkdown document downloads and caches the training and testing files and caches them.  40% of the training reserved for validation resulting in three files with  respectively.  Then the data were explored and cleaned.  Variables were removed for two reasons: they were identified by R nearZeroVar or they had values that were primarily a single value.  In addition, variables with more than 25% "NA" values were removed. Removing these variables was necessary so that models would perform adequately.  After this cleaning process there were only 57 predictor variables left.
+
+R nearZeroVar diagnoses predictors that have one unique value (i.e. are zero variance predictors) or predictors that are have both of the following characteristics: they have very few unique values relative to the number of samples and the ratio of the frequency of the most common value to the frequency of the second most common value is large. checkConditionalX looks at the distribution of the columns of x conditioned on the levels of y and identifies columns of x that are sparse within groups of y.
+
+The R Markdown file contains all the code needed to reproduce these data files and perform the analysis.
+
+```{r proc,echo=FALSE,cache=TRUE,results='hide'}
+getwd()
+setwd("~/Desktop/Online-Classes/Johns Hopkins Data Science/Practical Machine Learning")
+# getwd()
+# dir()
+# filename1<-("~/Desktop/Online-Classes/Johns Hopkins Data Science/Practical Machine Learning/xdf1.rds")
+# load(filename1)
+# ls()
+# dir()
+library(RCurl)
+trainURL<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+train<-read.csv(url(trainURL), na.strings=c("NA","DIV/0!"," "))
+trainname<-("~/Desktop/Online-Classes/Johns Hopkins Data Science/Practical Machine Learning/train.rds")
+save(train,file=trainname)
+load(trainname)
+
+testURL<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+test<-read.csv(url(testURL), na.strings=c("NA","DIV/0!"," "))
+testname<-("~/Desktop/Online-Classes/Johns Hopkins Data Science/Practical Machine Learning/test.rds")
+save(test,file=testname)
+load(testname)                                            
+                                            
+```
+
+```{r proc2,cache=FALSE,echo=FALSE,results='hide'} 
+#,results='hide'}
+dir(pattern="*.rds")
+ls()
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+```
+
+```{r proc3,cache=TRUE}
+#,results='hide'}
+set.seed(303202)
+# split training data 60/40 and use the 40 for validation.
+valLog<-createDataPartition(y=train$classe,times=1,p=0.4,list=FALSE)
+dim(valLog);  head(valLog)
+val<-train[valLog,];    train2<-train[-valLog,]
+train2Obs<-nrow(train2);   valObs<-nrow(val);    testObs<-nrow(test)
+save(train2,file="train2.rds");  load("train2.rds")
+save(val,file="val.rds");  load("val.rds")
+```
+
+```{r proc4,cache=TRUE}
+#find near zero variance variables.  
+allVars<-nearZeroVar(train2,freqCut=80/20,uniqueCut=10,saveMetrics=TRUE)
+save(allVars,file="allVars.rds");  load("allVars.rds")
+goodVars<-allVars[!allVars$nzv,]
+save(goodVars,file="goodVars.rds") ; load("goodVars.rds")
+badVars<-allVars[allVars$nzv,]
+save(badVars,file="badVars.rds");  load("badVars.rds")
+dir(pattern="*.rds"); ls()
+
+```
+
+
+```{r proc5,cache=TRUE}
+#from train2, remove variables with near zero variance
+goodVarNames<-row.names(goodVars)
+train3<-train2[,goodVarNames]
+save(train3,file="train3.rds");  load("train3.rds")
+#from train3, find and remove the variable names that are NA more than 25% of the time
+naCols<-apply(train3,2,function (x) length(which(is.na(x)) ) )
+naColsLog<-apply(train3,2,function (x) length(which(is.na(x)) ) >= nrow(train3)/4 ) 
+notNAvarnames<-names(naColsLog)[!naColsLog]
+train4<-train3[,notNAvarnames]
+train4<-train4[,-1]  # the ID=X variable may interfere with the model
+save(train4,file="train4.rds");  load("train4.rds")
+# save these variables
+charVec<-c("goodVarNames","naCols","naColsLog","notNAvarnames")
+save(list=charVec,file="proc5Vars")
+#do the same transformation on val
+val2<-val[,goodVarNames]
+save(val2,file="val2.rds");  load("val2.rds")
+val3<-val2[,notNAvarnames]
+val3<-val3[,-1]  # the ID=X variable may interfere with the model
+save(val3,file="val3.rds");  load("val3.rds")
+
+
+#do the same transformation on test - does not have the "classe" variable
+problem_id<-test[,"problem_id"] # has problem_id instead of classe
+test2<-test[,goodVarNames[1:91]] # var#92 is classe
+save(test2,file="test2.rds");  load("test2.rds")
+test3<-test2[,notNAvarnames[1:58]] # var#59 is classe
+test3<-cbind(test3,problem_id) # put back problem_id
+test3<-test3[,-1]  # the ID=X variable may interfere with the model
+save(test3,file="test3.rds");  load("test3.rds")
+
+```
+
+```{r proc6,cache=TRUE,echo=F,results='hide'}
+#save these variables to use in the executive summary
+names(train4)
+train4Obs<-nrow(train4)
+val3Obs<-nrow(val3)
+test3Obs<-nrow(test3)
+```
+
+
+
+#Building the First Model
+
+The first model is a classification tree that has an accuracy of about 88%.
+```{r build1 ,cache=TRUE}
+
+build1Fit<-rpart(classe~.,data=train4,method="class")
+par(mfrow = c(1,1), xpd = NA)
+fancyRpartPlot(build1Fit)
+
+save(build1Fit,file="build1Fit");  load("build1Fit")
+
+pred1<-predict(build1Fit,train4,type="class")
+confusionMatrix(pred1,train4$classe)
+
+
+
+```
+
+
+
+#Building the Second Model
+
+The second model uses a random forest and then a classification tree, which gives accuracy of 100%
+```{r build2 ,cache=TRUE}
+
+build2RF<-randomForest(classe~.,data=train4)
+
+save(build2RF,file="build2RF");  load("build2RF")
+
+pred2<-predict(build2RF,train4,type="class")
+confusionMatrix(pred2,train4$classe)
+
+```
+
+
+#Cross Validating the Model
+
+```{r cross, cache=TRUE}
+
+```
+
+#Estimating Out of Sample Error
+
+Out of Sample Error was tested using the validation set and was less than 1%
+```{r out, cache=TRUE}
+
+pred3<-predict(build2RF,val3,type="class")
+confusionMatrix(pred3,val3$classe)
+
+```
+
+
+#Producing Response Files for 20 Questions
+
+```{r testQ,cache=TRUE}
+test4<-test3[,-58]
+test4$magnet_dumbbell_z<-as.numeric(test4$magnet_dumbbell_z)
+testPred<-predict(build2RF,test4,type="class")
+
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+for (i in 1:58) {print(class(test5[,i]))}
+for (i in 1:58) {print(class(val3[,i]))}
+```
